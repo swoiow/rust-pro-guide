@@ -1,0 +1,31 @@
+# Rust Cargo Profile Configurations (slim) — key=val # one-line comment
+# Grounded in profiles.md and build-performance.md.
+
+
+[profile.release]
+opt-level = "z"            # Smallest code; turns off loop vectorization. NOT always smaller than "s" — measure.
+debug = 0                  # No debuginfo; eliminates .debug_* sections, the largest bloat source.
+split-debuginfo = "off"    # No side debug file; overrides platform-specific defaults (e.g. macOS "unpacked").
+strip = "symbols"          # Strip symbol table; default is "none". Zero runtime cost for a size win.
+debug-assertions = false   # Disable cfg(debug_assertions) and debug_assert!; removes assertion branches.
+overflow-checks = false    # Disable runtime overflow panics; removes per-arithmetic guard branches.
+lto = true                 # Cross-crate fat LTO (identical to "fat"); whole-program dead-code elimination.
+panic = "abort"            # Drop unwind tables and landing pads; ignored by tests/bench/build-scripts/proc-macros.
+incremental = false        # Full compile only; incremental fragments optimization and inhibits whole-program analysis.
+codegen-units = 1          # One unit for max optimizer visibility; dominant build-time penalty per build-performance.md.
+rpath = false              # No embedded runtime search paths; keeps dynamic-linker section minimal.
+
+
+[profile.staging]
+inherits = "release"       # Start from the size-disciplined release baseline; override only size-for-speed levers.
+opt-level = 3              # All optimizations (inline/vectorize/unroll). Documented: 3 can be slower than 2 — measure.
+debug = 0                  # Retain release; production parity — debuginfo would distort timing and layout.
+split-debuginfo = "off"    # Retain release; keep artifact self-contained, matching what ships.
+strip = "symbols"          # Retain release; bounds the bloat from opt-level 3's aggressive inlining/unrolling.
+debug-assertions = false   # Retain release; assertion branches would alter hot-path timing and mask real numbers.
+overflow-checks = false    # Retain release; overflow guards compound in tight numeric kernels.
+lto = true                 # Same value as release (true == "fat"); declared for visibility, NOT an override.
+panic = "abort"            # Retain release. CAVEAT: cargo test forces unwind + recompiles all deps — use bench instead.
+incremental = false        # Retain release; incremental would undermine cross-crate LTO.
+codegen-units = 1          # Retain release; mandatory for opt-level 3 + fat LTO to reach full effect.
+rpath = false              # Retain release; keep dynamic-linker metadata minimal for layout parity.

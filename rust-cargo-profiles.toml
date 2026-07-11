@@ -1,0 +1,201 @@
+# ============================================================================
+# Rust Cargo Profile Configurations (revision 2)
+# ----------------------------------------------------------------------------
+# Authored strictly against the two official references in this workspace:
+#   - profiles.md            (Cargo Profile reference)
+#   - build-performance.md   (Optimizing Build Performance)
+#
+# Design intent for every field is grounded in those two documents. Where the
+# official docs carry an explicit warning or counter-intuitive tradeoff, it is
+# surfaced inline rather than hidden behind a confident-looking value.
+# ============================================================================
+
+
+# ============================================================================
+# Cross-cutting warnings carried forward from the official docs
+# ----------------------------------------------------------------------------
+# (A) opt-level is NOT monotonic.
+#     profiles.md: "level 3 being slower than 2, or the 's' and 'z' levels
+#     not being necessarily smaller." Always measure before committing.
+# (B) lto: true and "fat" are the SAME value.
+#     profiles.md: `true` or `"fat"` both perform cross-crate "fat" LTO.
+#     Overriding true -> "fat" in an inheriting profile is a no-op.
+# (C) panic = "abort" has non-obvious side effects.
+#     profiles.md: tests/benchmarks/build-scripts/proc-macros IGNORE this
+#     setting, and when building a test with abort, all dependencies are
+#     FORCED to build with unwind. This can break production-parity testing.
+# (D) codegen-units = 1 + lto = true carries a real BUILD-TIME cost.
+#     build-performance.md frames build time as a first-class concern; these
+#     two settings together are the largest single contributor to slow links.
+# ============================================================================
+
+
+# ============================================================================
+# Profile: release
+# ----------------------------------------------------------------------------
+# Goal priority: Binary Size FIRST, Execution Speed SECOND.
+# Per profiles.md, all 11 profile settings are explicitly declared below.
+# ============================================================================
+[profile.release]
+# opt-level = "z"
+#   profiles.md: "z" optimizes for binary size AND turns off loop vectorization.
+#   Design intent: smallest possible instruction stream for constrained targets.
+#   WARNING (profiles.md): "z" is NOT guaranteed smaller than "s" — disabling
+#   vectorization can emit more scalar instructions. If a benchmark shows "s"
+#   produces a smaller artifact for this crate, switch to "s".
+opt-level = "z"
+
+# debug = 0
+#   profiles.md: 0 / false / "none" means no debug info at all; this is the
+#   documented default for release. Design intent: eliminate .debug_* sections,
+#   the single largest contributor to binary bloat.
+debug = 0
+
+# split-debuginfo = "off"
+#   profiles.md: controls whether debug info is embedded or placed alongside.
+#   Default is platform-specific ("unpacked" on macOS when debug is enabled).
+#   Design intent: with debug = 0 there is nothing to split, but we set "off"
+#   explicitly so no platform-specific default can re-introduce a side file.
+split-debuginfo = "off"
+
+# strip = "symbols"
+#   profiles.md: "symbols" strips the symbol table; default is "none".
+#   Design intent: remove symbol and stack-frame metadata that serves only
+#   linking and post-mortem tooling, not runtime execution.
+strip = "symbols"
+
+# debug-assertions = false
+#   profiles.md: controls cfg(debug_assertions) and the debug_assert! macro.
+#   Design intent: remove runtime precondition checks that bloat code and add
+#   unreachable assertion branches. This is the documented release default.
+debug-assertions = false
+
+# overflow-checks = false
+#   profiles.md: controls runtime integer-overflow panics.
+#   Design intent: removes the overflow-guard branches inserted around
+#   arithmetic, shrinking both code size and per-operation cost.
+overflow-checks = false
+
+# lto = true
+#   profiles.md: true (== "fat") performs cross-crate whole-program LTO.
+#   Design intent: lets LLVM see the entire dependency graph at link time,
+#   eliminating dead code across crate boundaries — the key lever for size.
+#   NOTE: true and "fat" are identical; do not write "fat" expecting more.
+lto = true
+
+# panic = "abort"
+#   profiles.md: terminates the process on panic instead of unwinding.
+#   Design intent: removes unwinding machinery and landing-pad tables from
+#   every function prologue/epilogue, a major size win.
+#   CAVEAT (profiles.md): tests/bench/build-scripts/proc-macros ignore this;
+#   building a test forces all deps back to unwind. See staging profile.
+panic = "abort"
+
+# incremental = false
+#   profiles.md: controls -C incremental; only affects workspace members and
+#   path deps. Design intent: incremental mode fragments optimization and
+#   inhibits whole-program analysis; disabling it yields tighter, smaller code.
+incremental = false
+
+# codegen-units = 1
+#   profiles.md: default is 256 (incremental) / 16 (non-incremental).
+#   Design intent: force LLVM to compile the whole crate as one unit so the
+#   optimizer has maximal visibility for dead-code elimination and inlining.
+#   COST (build-performance.md): this is the dominant build-time penalty.
+codegen-units = 1
+
+# rpath = false
+#   profiles.md: controls -C rpath (runtime library search path embedding).
+#   Design intent: keep the dynamic-linker section minimal; rpath metadata
+#   would otherwise inflate the output with no runtime benefit here.
+rpath = false
+
+
+# ============================================================================
+# Profile: staging
+# ----------------------------------------------------------------------------
+# Goal priority: Execution Speed FIRST, Binary Size Smaller SECOND.
+# Inherits release, then selectively overrides toward maximum instruction
+# efficiency while retaining the size-discipline that keeps aggressive
+# optimization heuristics from bloating the artifact.
+# Per the task, all 12 settings (inherits + 11) are explicitly declared.
+# ============================================================================
+[profile.staging]
+# inherits = "release"
+#   profiles.md: custom profiles MUST declare inherits; unset fields fall back
+#   to the named profile. Design intent: start from the size-disciplined
+#   release baseline so only the fields that genuinely trade size for speed
+#   need to be overridden.
+inherits = "release"
+
+# opt-level = 3
+#   profiles.md: level 3 enables all optimizations (inlining, vectorization,
+#   unrolling, scheduling). Design intent: maximize instruction throughput.
+#   WARNING (profiles.md): "level 3 being slower than 2" is a documented
+#   possibility. If benchmarks show opt-level 2 is faster for this crate's
+#   hot paths, prefer 2 — it also produces smaller code.
+opt-level = 3
+
+# debug = 0
+#   Retain release value. Design intent: production parity — the staging
+#   artifact should mirror the shipped binary's metadata footprint, so timing
+#   numbers are not distorted by debuginfo weight or altered layout.
+debug = 0
+
+# split-debuginfo = "off"
+#   Retain release value. Design intent: keep the staging artifact
+#   self-contained; a split debug file would diverge from what ships.
+split-debuginfo = "off"
+
+# strip = "symbols"
+#   Retain release value. Design intent: even at speed priority, symbol
+#   tables add zero runtime value; stripping is what keeps opt-level 3's
+#   aggressive inlining and unrolling from inflating the artifact unbounded.
+strip = "symbols"
+
+# debug-assertions = false
+#   Retain release value. Design intent: production parity. Assertion
+#   branches would alter hot-path timing and mask real performance numbers.
+debug-assertions = false
+
+# overflow-checks = false
+#   Retain release value. Design intent: overflow guards compound inside
+#   tight numeric kernels; removing them yields cleaner optimized assembly
+#   and matches the shipped binary's arithmetic behavior.
+overflow-checks = false
+
+# lto = true
+#   profiles.md: true and "fat" are identical; release already sets true.
+#   Declared explicitly here per the "all settings visible" requirement, but
+#   note this is NOT an override — it is the same cross-crate fat LTO.
+#   Design intent: cross-crate inlining and specialization are essential to
+#   realize the speed gains that opt-level 3 enables.
+lto = true
+
+# panic = "abort"
+#   Retain release value. Design intent: removing landing pads lets the
+#   optimizer schedule hot code without unwinding constraints.
+#   CRITICAL CAVEAT (profiles.md): if you run `cargo test --profile staging`,
+#   the test harness forces unwind and recompiles ALL dependencies with
+#   panic = unwind. For true production-parity BENCHMARKING use
+#   `cargo bench --profile staging` or a harness-less integration test,
+#   otherwise the compiled artifact diverges from what this profile specifies.
+panic = "abort"
+
+# incremental = false
+#   Retain release value. Design intent: incremental mode fragments
+#   optimization and would undermine cross-crate LTO; full compilation only.
+incremental = false
+
+# codegen-units = 1
+#   Retain release value. Design intent: mandatory for opt-level 3 + fat LTO
+#   to reach full effect — the optimizer needs the whole crate in view to
+#   inline, vectorize, and eliminate dead code globally.
+#   COST (build-performance.md): combined with lto = true this makes staging
+#   the slowest-building profile; budget CI time accordingly.
+codegen-units = 1
+
+# rpath = false
+#   Retain release value. Design intent: keep dynamic-linker metadata minimal
+#   so the staging artifact's layout matches the shipped binary.
+rpath = false
